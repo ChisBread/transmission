@@ -43,3 +43,6 @@
 [submodule "third-party/fmt"]
 	path = third-party/fmt
 	url = https://github.com/transmission/fmt.git
+[submodule "third-party/transmission-web-control"]
+	path = third-party/transmission-web-control
+	url = git@github.com:ChisBread/transmission-web-control.git

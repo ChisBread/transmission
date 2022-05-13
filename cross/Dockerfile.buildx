@@ -1,0 +1,10 @@
+FROM linuxserver/transmission:latest
+RUN apk update && apk add --update ca-certificates \
+    gettext-dev
+ADD ./cross/install /install
+ADD ./third-party/transmission-web-control/src /transmission-web-control
+COPY ./cross/inbuildx.sh /inbuildx.sh
+RUN /inbuildx.sh && rm -rf /build /inbuildx.sh
+ENV RPCPORT=9091
+ENV TRANSMISSION_WEB_HOME=/transmission-web-control/
+EXPOSE $RPCPORT

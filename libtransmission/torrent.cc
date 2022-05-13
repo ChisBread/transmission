@@ -2854,3 +2854,40 @@ void tr_torrent::initCheckedPieces(tr_bitfield const& checked, time_t const* mti
         }
     }
 }
+
+
+tr_preverify_state tr_torrent::preverifyState() {
+    tr_preverify_state ret = TR_VERIFY_MUST_NOT;
+    bool has_sim = false;
+    bool has_must = false;
+    for(auto dst : this->session->torrents()) {
+        if (tr_torrentGetActivity(dst) != TR_STATUS_SEED
+            || this->fileCount() != dst->fileCount()
+            || this->totalSize() != dst->totalSize()) {
+            continue;
+        }
+        bool is_sim = true;
+        for(tr_file_index_t i = 0; i < dst->fileCount(); ++i) {
+            if ( this->fileSize(i) != dst->fileSize(i) 
+                || this->fileSubpath(i) != dst->fileSubpath(i) )
+            {
+                is_sim = false;
+                break;
+            }
+        }
+        if (is_sim) {
+            has_sim = is_sim;
+        }
+        if(this->infoHashString() == dst->infoHashString()) {
+            has_must = true;
+            break;
+        }
+    }
+    if(has_sim) {
+        ret = TR_VERIFY_SIM;
+        if (has_must) {
+            ret = TR_VERIFY_MUST;
+        }
+    }
+    return ret;
+}

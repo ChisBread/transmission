@@ -79,7 +79,12 @@ enum tr_verify_state : uint8_t
     TR_VERIFY_WAIT,
     TR_VERIFY_NOW
 };
-
+enum tr_preverify_state :uint8_t
+{
+    TR_VERIFY_MUST,     // has seeding(done) and same file, same torrent size, same info hash
+    TR_VERIFY_SIM,      // has seeding(done) and same file, same torrent size
+    TR_VERIFY_MUST_NOT, // none
+};
 tr_torrent_activity tr_torrentGetActivity(tr_torrent const* tor);
 
 struct tr_incomplete_metadata;
@@ -95,6 +100,8 @@ public:
     }
 
     ~tr_torrent() override = default;
+    
+    tr_preverify_state preverifyState();
 
     void setLocation(
         std::string_view location,

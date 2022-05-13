@@ -29,13 +29,35 @@
 
 static auto constexpr MsecToSleepPerSecondDuringVerify = int{ 100 };
 
+//global
+static bool FastHashCheck = true;
+static tr_piece_index_t FastCheckRate = 256;
+void tr_setFastHash(bool set) 
+{   
+    FastHashCheck = set;
+}
+bool tr_getFastHash(void) 
+{   
+    return FastHashCheck;
+}
 static bool verifyTorrent(tr_torrent* tor, bool const* stopFlag)
 {
+    bool is_first_run = true;
+    auto prev_state = tor->preverifyState();
+    tr_piece_index_t fast_check_rate = FastCheckRate;
+    if(prev_state == TR_VERIFY_SIM) {
+        fast_check_rate *= 2;
+    } else if(prev_state == TR_VERIFY_SIM) {
+        fast_check_rate *= 4;
+    }
+retry:{
+
     auto const begin = tr_time();
 
     tr_sys_file_t fd = TR_BAD_SYS_FILE;
     uint64_t file_pos = 0;
     bool changed = false;
+    bool bad_result = false;
     bool had_piece = false;
     time_t last_slept_at = 0;
     uint32_t piece_pos = 0;
@@ -47,6 +69,8 @@ static bool verifyTorrent(tr_torrent* tor, bool const* stopFlag)
 
     tr_logAddDebugTor(tor, "verifying torrent...");
 
+    bool fast_hash_check_flag = false;
+    tr_piece_index_t next_need_check = 0;
     while (!*stopFlag && piece < tor->pieceCount())
     {
         auto const file_length = tor->fileSize(file_index);
@@ -70,17 +94,38 @@ static bool verifyTorrent(tr_torrent* tor, bool const* stopFlag)
         uint64_t left_in_file = file_length - file_pos;
         uint64_t bytes_this_pass = std::min(left_in_file, left_in_piece);
         bytes_this_pass = std::min(bytes_this_pass, uint64_t(std::size(buffer)));
+        /* Check or no check? It's a question.  */
+        if (FastHashCheck) {
+            if(next_need_check != piece && (file_pos <= tor->pieceSize(piece)*2 || left_in_file <= tor->pieceSize(piece)*2)) {
+                if(piece_pos == 0) {
+                    next_need_check = piece;
+                } else {
+                    next_need_check = piece+1;
+                }
+            }
+            bool is_need_check = 
+                ( piece%fast_check_rate == 0)
+                || ( piece == next_need_check )
+                || ( piece+1 == tor->pieceCount())
+                || ( piece == 0 );
+            fast_hash_check_flag = !is_need_check && is_first_run;
+        } else {
+            fast_hash_check_flag = false;
+        }
 
         /* read a bit */
         if (fd != TR_BAD_SYS_FILE)
         {
             auto num_read = uint64_t{};
-            if (tr_sys_file_read_at(fd, std::data(buffer), bytes_this_pass, file_pos, &num_read) && num_read > 0)
+            if (!fast_hash_check_flag && tr_sys_file_read_at(fd, std::data(buffer), bytes_this_pass, file_pos, &num_read) && num_read > 0)
             {
                 bytes_this_pass = num_read;
                 tr_sha1_update(sha, std::data(buffer), bytes_this_pass);
                 tr_sys_file_advise(fd, file_pos, bytes_this_pass, TR_SYS_FILE_ADVICE_DONT_NEED);
             }
+        } else {
+            // always check bad file
+            fast_hash_check_flag = false;
         }
 
         /* move our offsets */
@@ -92,9 +137,12 @@ static bool verifyTorrent(tr_torrent* tor, bool const* stopFlag)
         /* if we're finishing a piece... */
         if (left_in_piece == 0)
         {
-            auto const hash = tr_sha1_final(sha);
-            auto const has_piece = hash && *hash == tor->pieceHash(piece);
-
+            bool has_piece = true;
+            if (!fast_hash_check_flag) {
+                auto const hash = tr_sha1_final(sha);
+                has_piece = hash && *hash == tor->pieceHash(piece);
+                bad_result |= !has_piece;
+            }
             if (has_piece || had_piece)
             {
                 tor->setHasPiece(piece, has_piece);
@@ -109,7 +157,10 @@ static bool verifyTorrent(tr_torrent* tor, bool const* stopFlag)
             if (auto const now = tr_time(); last_slept_at != now)
             {
                 last_slept_at = now;
-                tr_wait_msec(MsecToSleepPerSecondDuringVerify);
+                // no sleep during fast hash checking
+                if(fast_hash_check_flag) {
+                    tr_wait_msec(MsecToSleepPerSecondDuringVerify);
+                }
             }
 
             sha = tr_sha1_init();
@@ -129,6 +180,10 @@ static bool verifyTorrent(tr_torrent* tor, bool const* stopFlag)
 
             ++file_index;
             file_pos = 0;
+            // break bad result
+            if(FastHashCheck && bad_result && is_first_run) {
+                break;
+            }
         }
     }
 
@@ -140,6 +195,16 @@ static bool verifyTorrent(tr_torrent* tor, bool const* stopFlag)
 
     tr_sha1_final(sha);
 
+    /* bad_result retry */
+    if(FastHashCheck && bad_result && is_first_run) {
+        is_first_run = false;
+        goto retry;
+    }
+	if (FastHashCheck && is_first_run) {
+        tr_logAddDebugTor(
+            tor,
+            "Verify with fast hash check");
+	}
     /* stopwatch */
     time_t const end = tr_time();
     tr_logAddDebugTor(
@@ -151,6 +216,7 @@ static bool verifyTorrent(tr_torrent* tor, bool const* stopFlag)
             tor->totalSize() / (1 + (end - begin))));
 
     return changed;
+}
 }
 
 /***
