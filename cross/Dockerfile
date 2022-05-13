@@ -3,5 +3,4 @@ RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.tuna.tsinghua.edu.cn/g' /etc/apk/re
 RUN apk update && apk add --update ca-certificates \
     cmake make automake autoconf \
     pkgconfig gcc g++ git linux-headers \
-    curl-static openssl-libs-static libevent-static gettext-static \
     curl-dev libevent-dev gettext-dev 
